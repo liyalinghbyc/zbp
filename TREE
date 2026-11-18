@@ -246,6 +246,10 @@ try:
     )
     plt.title('决策树可视化（ID3/信息增益）')
     plt.tight_layout()
-    plt.show()
+    plt.show()  
+    # plt.show如果云端不行，换成plt.savefig("decision_tree.png", dpi=150, bbox_inches="tight")
 except ImportError:
     print("（需要安装graphviz才能可视化，跳过）")
+
+
+
