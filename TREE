@@ -1,0 +1,251 @@
+import numpy as np
+import pandas as pd
+from sklearn.datasets import load_iris
+from sklearn.model_selection import train_test_split
+from sklearn.tree import DecisionTreeClassifier, export_text
+from sklearn.metrics import accuracy_score, confusion_matrix
+import matplotlib.pyplot as plt
+
+
+# ============================================================
+# 一、ID3算法核心原理（课堂讲解重点）
+# ============================================================
+"""
+ID3算法核心思想：
+1. 计算数据集的信息熵 H(D) = -Σ p_i * log2(p_i)
+2. 按每个特征A划分数据集，计算条件熵 H(D|A)
+3. 计算信息增益 g(D,A) = H(D) - H(D|A)
+4. 选择信息增益最大的特征进行分裂
+5. 递归构建决策树
+
+信息增益越大 → 该特征对分类帮助越大 → 优先选择
+"""
+
+
+# ============================================================
+# 二、手动实现ID3决策树
+# ============================================================
+class DecisionTreeID3:
+    """
+    手动实现ID3决策树分类器
+    支持：信息增益、递归分裂、预测
+    """
+
+    def __init__(self, max_depth=3, min_samples_split=2):
+        self.max_depth = max_depth          # 最大深度（防止过拟合）
+        self.min_samples_split = min_samples_split  # 节点最小样本数
+        self.tree = None                    # 存储决策树
+        self.feature_names = None
+
+    def _entropy(self, y):
+        """计算信息熵 H(D) = -Σ p_i * log2(p_i)"""
+        # 统计每个类别的概率
+        counts = np.bincount(y)
+        probabilities = counts[counts > 0] / len(y)
+        # 计算熵
+        entropy = -np.sum(probabilities * np.log2(probabilities))
+        return entropy
+
+    def _information_gain(self, X, y, feature_idx):
+        """计算按特征feature_idx划分的信息增益"""
+        # 原始熵
+        original_entropy = self._entropy(y)
+
+        # 按特征取值分组
+        unique_values = np.unique(X[:, feature_idx])
+        conditional_entropy = 0.0
+
+        for value in unique_values:
+            # 取出该特征等于value的子集
+            subset_y = y[X[:, feature_idx] == value]
+            # 加权计算条件熵
+            conditional_entropy += (len(subset_y) / len(y)) * self._entropy(subset_y)
+
+        # 信息增益 = 原熵 - 条件熵
+        gain = original_entropy - conditional_entropy
+        return gain
+
+    def _best_feature_split(self, X, y):
+        """选择信息增益最大的特征"""
+        num_features = X.shape[1]
+        best_gain = -1
+        best_feature = -1
+
+        for feature_idx in range(num_features):
+            gain = self._information_gain(X, y, feature_idx)
+            if gain > best_gain:
+                best_gain = gain
+                best_feature = feature_idx
+
+        return best_feature, best_gain
+
+    def _build_tree(self, X, y, depth=0):
+        """递归构建决策树"""
+        num_samples, num_features = X.shape
+        num_classes = len(np.unique(y))
+
+        # 停止条件1：所有样本属于同一类
+        if num_classes == 1:
+            return y[0]
+
+        # 停止条件2：达到最大深度
+        if depth >= self.max_depth:
+            return np.bincount(y).argmax()
+
+        # 停止条件3：样本数太少
+        if num_samples < self.min_samples_split:
+            return np.bincount(y).argmax()
+
+        # 选择最佳分裂特征
+        best_feature, best_gain = self._best_feature_split(X, y)
+
+        # 信息增益为0（无法再分）
+        if best_gain == 0:
+            return np.bincount(y).argmax()
+
+        # 递归构建子树
+        tree = {best_feature: {}}
+        unique_values = np.unique(X[:, best_feature])
+
+        for value in unique_values:
+            # 子集
+            mask = X[:, best_feature] == value
+            X_subset = X[mask]
+            y_subset = y[mask]
+
+            # 递归
+            tree[best_feature][value] = self._build_tree(X_subset, y_subset, depth + 1)
+
+        return tree
+
+    def fit(self, X, y, feature_names=None):
+        """训练决策树"""
+        self.feature_names = feature_names
+        self.tree = self._build_tree(X, y)
+
+    def _predict_one(self, x, tree):
+        """预测单个样本"""
+        # 如果是叶子节点（值是整数/类别）
+        if not isinstance(tree, dict):
+            return tree
+
+        # 获取分裂特征
+        feature_idx = list(tree.keys())[0]
+        feature_value = x[feature_idx]
+
+        # 递归查找
+        if feature_value in tree[feature_idx]:
+            return self._predict_one(x, tree[feature_idx][feature_value])
+        else:
+            # 训练集没见过的取值，返回众数
+            return 0
+
+    def predict(self, X):
+        """预测多个样本"""
+        predictions = [self._predict_one(x, self.tree) for x in X]
+        return np.array(predictions)
+
+    def print_tree(self, tree=None, indent=""):
+        """打印决策树结构"""
+        if tree is None:
+            tree = self.tree
+
+        if not isinstance(tree, dict):
+            print(f"{indent}→ 类别: {tree}")
+            return
+
+        feature_idx = list(tree.keys())[0]
+        feature_name = self.feature_names[feature_idx] if self.feature_names else f"特征{feature_idx}"
+
+        for value, subtree in tree[feature_idx].items():
+            print(f"{indent}{feature_name} = {value}:")
+            self.print_tree(subtree, indent + "  ")
+
+
+# ============================================================
+# 三、使用示例：鸢尾花数据集
+# ============================================================
+# 加载数据
+iris = load_iris()
+X = iris.data
+y = iris.target
+feature_names = iris.feature_names
+class_names = iris.target_names
+
+print("===== 数据集信息 =====")
+print(f"样本数: {X.shape[0]}")
+print(f"特征数: {X.shape[1]}")
+print(f"特征名称: {feature_names}")
+print(f"类别: {class_names}")
+
+# 注意：ID3处理离散特征，这里把连续特征离散化（分箱）
+X_discrete = np.zeros_like(X, dtype=int)
+for i in range(X.shape[1]):
+    # 按三分位数分成3类：0,1,2
+    X_discrete[:, i] = np.digitize(X[:, i], np.percentile(X[:, i], [33, 67]))
+
+# 划分训练集测试集
+X_train, X_test, y_train, y_test = train_test_split(
+    X_discrete, y, test_size=0.2, random_state=42
+)
+
+print(f"\n训练集: {len(X_train)} 样本")
+print(f"测试集: {len(X_test)} 样本")
+
+
+# ============================================================
+# 四、训练手动实现的ID3决策树
+# ============================================================
+print("\n" + "="*50)
+print("手动实现ID3决策树")
+print("="*50)
+
+manual_tree = DecisionTreeID3(max_depth=3)
+manual_tree.fit(X_train, y_train, feature_names=feature_names)
+
+print("\n决策树结构：")
+manual_tree.print_tree()
+
+# 预测与评估
+y_pred_manual = manual_tree.predict(X_test)
+print(f"\n测试集准确率: {accuracy_score(y_test, y_pred_manual):.4f}")
+print("混淆矩阵:")
+print(confusion_matrix(y_test, y_pred_manual))
+
+
+# ============================================================
+# 五、sklearn决策树对比（CART算法）
+# ============================================================
+print("\n" + "="*50)
+print("sklearn 决策树（CART算法）")
+print("="*50)
+
+sklearn_tree = DecisionTreeClassifier(criterion='entropy', max_depth=3, random_state=42)
+sklearn_tree.fit(X_train, y_train)
+
+y_pred_sklearn = sklearn_tree.predict(X_test)
+print(f"测试集准确率: {accuracy_score(y_test, y_pred_sklearn):.4f}")
+print("\n决策树规则文本：")
+print(export_text(sklearn_tree, feature_names=feature_names))
+
+
+# ============================================================
+# 六、可视化决策树
+# ============================================================
+try:
+    from sklearn.tree import plot_tree
+
+    plt.figure(figsize=(15, 8))
+    plot_tree(
+        sklearn_tree,
+        feature_names=feature_names,
+        class_names=class_names,
+        filled=True,
+        rounded=True,
+        fontsize=10
+    )
+    plt.title('决策树可视化（ID3/信息增益）')
+    plt.tight_layout()
+    plt.show()
+except ImportError:
+    print("（需要安装graphviz才能可视化，跳过）")
